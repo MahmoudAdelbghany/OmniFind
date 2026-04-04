@@ -50,25 +50,7 @@ PORT=5000
 npm install
 ```
 
-### 4. Seed the database (first time only)
-
-This loads 100 products into MongoDB and creates a default admin account:
-
-```bash
-npm run seed
-```
-
-You should see:
-
-```
-MongoDB connected: ...
-Inserted 100 products into MongoDB.
-Default admin created:
-  Email:    admin@omnifind.com
-  Password: admin123
-```
-
-### 5. Start the backend server
+### 4. Start the backend server
 
 ```bash
 npm run dev
@@ -76,7 +58,7 @@ npm run dev
 
 Backend runs on **http://localhost:5000**
 
-### 6. Install & start the frontend (new terminal)
+### 5. Install & start the frontend (new terminal)
 
 Open a **second terminal** and run:
 
@@ -88,7 +70,7 @@ npx vite
 
 Frontend runs on **http://localhost:3000**
 
-### 7. Open in browser
+### 6. Open in browser
 
 Go to **http://localhost:3000** and you're good to go!
 
@@ -96,13 +78,14 @@ Go to **http://localhost:3000** and you're good to go!
 
 ## Summary of Commands
 
-| What                  | Command        | Where                |
-| --------------------- | -------------- | -------------------- |
-| Install backend deps  | `npm install`  | `OmniFind/`          |
-| Seed database         | `npm run seed` | `OmniFind/`          |
-| Start backend         | `npm run dev`  | `OmniFind/`          |
-| Install frontend deps | `npm install`  | `OmniFind/frontend/` |
-| Start frontend        | `npx vite`     | `OmniFind/frontend/` |
+| What                  | Command       | Where                |
+| --------------------- | ------------- | -------------------- |
+| Install backend deps  | `npm install` | `OmniFind/`          |
+| Start backend         | `npm run dev` | `OmniFind/`          |
+| Install frontend deps | `npm install` | `OmniFind/frontend/` |
+| Start frontend        | `npx vite`    | `OmniFind/frontend/` |
+
+> `npm run seed` exists but **don't run it** — the database is already seeded. Running it would reset all products.
 
 > You need **two terminals** running at the same time: one for backend, one for frontend.
 

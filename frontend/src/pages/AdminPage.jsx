@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { productAPI, authAPI } from "../api";
+import { productAPI, authAPI, resolveProductImage } from "../api";
 
 export default function AdminPage() {
   const [products, setProducts] = useState([]);
@@ -8,20 +8,20 @@ export default function AdminPage() {
   const [msg, setMsg] = useState("");
   const [error, setError] = useState("");
 
-  // New product form
   const [form, setForm] = useState({
     name: "",
     main_category: "",
     sub_category: "",
-    image_url: "",
     description: "",
     discount_price_usd: "",
     actual_price_usd: "",
     ratings: "",
     no_of_ratings: "",
+    link: "",
   });
+  const [imageFile, setImageFile] = useState(null);
+  const [syncingVisual, setSyncingVisual] = useState(false);
 
-  // New admin form
   const [adminForm, setAdminForm] = useState({ name: "", email: "", password: "" });
 
   useEffect(() => {
@@ -42,16 +42,28 @@ export default function AdminPage() {
     e.preventDefault();
     setMsg("");
     setError("");
+    if (!imageFile) {
+      setError("Product image is required.");
+      return;
+    }
     try {
-      const body = { ...form };
-      if (body.discount_price_usd) body.discount_price_usd = Number(body.discount_price_usd);
-      if (body.actual_price_usd) body.actual_price_usd = Number(body.actual_price_usd);
-      if (body.ratings) body.ratings = Number(body.ratings);
-      if (body.no_of_ratings) body.no_of_ratings = Number(body.no_of_ratings);
-
-      await productAPI.create(body);
-      setMsg("Product added!");
-      setForm({ name: "", main_category: "", sub_category: "", image_url: "", description: "", discount_price_usd: "", actual_price_usd: "", ratings: "", no_of_ratings: "" });
+      const formData = new FormData();
+      Object.entries(form).forEach(([key, value]) => formData.append(key, value));
+      formData.append("image", imageFile);
+      await productAPI.createWithImage(formData);
+      setMsg("Product added and embedded into Qdrant.");
+      setForm({
+        name: "",
+        main_category: "",
+        sub_category: "",
+        description: "",
+        discount_price_usd: "",
+        actual_price_usd: "",
+        ratings: "",
+        no_of_ratings: "",
+        link: "",
+      });
+      setImageFile(null);
       loadProducts();
     } catch (err) {
       setError(err.message);
@@ -81,6 +93,19 @@ export default function AdminPage() {
     }
   };
 
+  const handleSyncVisual = async () => {
+    setMsg("");
+    setError("");
+    setSyncingVisual(true);
+    try {
+      const data = await productAPI.syncVisualIndex();
+      setMsg(data.synced ? `Synced ${data.count} vectors to Qdrant.` : "Visual index already synced.");
+    } catch (err) {
+      setError(err.message);
+    }
+    setSyncingVisual(false);
+  };
+
   const f = (field) => ({
     value: form[field],
     onChange: (e) => setForm({ ...form, [field]: e.target.value }),
@@ -88,12 +113,19 @@ export default function AdminPage() {
 
   return (
     <div className="container">
-      <h2 style={{ marginBottom: 16 }}>Admin Panel</h2>
+      <h2 className="page-title">Admin Panel</h2>
 
       {msg && <div className="success">{msg}</div>}
       {error && <div className="error">{error}</div>}
 
-      {/* Add Product */}
+      <div className="card">
+        <h3 style={{ marginBottom: 12 }}>Visual Index</h3>
+        <p style={{ marginBottom: 12 }}>Sync pipeline-1 vectors from ~/amzon into local Qdrant.</p>
+        <button onClick={handleSyncVisual} className="btn btn-secondary" disabled={syncingVisual}>
+          {syncingVisual ? "Syncing..." : "Sync Visual Vectors"}
+        </button>
+      </div>
+
       <div className="card">
         <h3 style={{ marginBottom: 12 }}>Add New Product</h3>
         <form onSubmit={handleAddProduct}>
@@ -111,8 +143,8 @@ export default function AdminPage() {
               <input {...f("sub_category")} />
             </div>
             <div className="form-group">
-              <label>Image URL</label>
-              <input {...f("image_url")} />
+              <label>Product Link</label>
+              <input {...f("link")} />
             </div>
             <div className="form-group">
               <label>Discount Price ($)</label>
@@ -135,16 +167,27 @@ export default function AdminPage() {
             <label>Description</label>
             <textarea {...f("description")} />
           </div>
-          <button type="submit" className="btn btn-primary">Add Product</button>
+          <div className="form-group">
+            <label>Product Image *</label>
+            <input
+              type="file"
+              accept="image/png,image/jpeg,image/webp"
+              onChange={(e) => setImageFile(e.target.files?.[0] || null)}
+              required
+            />
+          </div>
+          <button type="submit" className="btn btn-primary">
+            Add Product
+          </button>
         </form>
       </div>
 
-      {/* Products Table */}
       <div className="card" style={{ marginTop: 16 }}>
         <h3 style={{ marginBottom: 12 }}>Manage Products</h3>
         <table>
           <thead>
             <tr>
+              <th>Image</th>
               <th>Name</th>
               <th>Category</th>
               <th>Price</th>
@@ -155,6 +198,16 @@ export default function AdminPage() {
           <tbody>
             {products.map((p) => (
               <tr key={p._id}>
+                <td>
+                  <img
+                    src={resolveProductImage(p)}
+                    alt={p.name}
+                    style={{ width: 52, height: 52, objectFit: "cover", borderRadius: 4 }}
+                    onError={(e) => {
+                      e.currentTarget.src = "https://via.placeholder.com/52x52?text=NA";
+                    }}
+                  />
+                </td>
                 <td style={{ maxWidth: 250, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                   {p.name}
                 </td>
@@ -172,14 +225,19 @@ export default function AdminPage() {
         </table>
         {totalPages > 1 && (
           <div className="pagination">
-            <button className="btn btn-secondary btn-small" disabled={page <= 1} onClick={() => setPage(page - 1)}>← Prev</button>
-            <span style={{ padding: "4px 12px" }}>Page {page} of {totalPages}</span>
-            <button className="btn btn-secondary btn-small" disabled={page >= totalPages} onClick={() => setPage(page + 1)}>Next →</button>
+            <button className="btn btn-secondary btn-small" disabled={page <= 1} onClick={() => setPage(page - 1)}>
+              Prev
+            </button>
+            <span style={{ padding: "4px 12px" }}>
+              Page {page} of {totalPages}
+            </span>
+            <button className="btn btn-secondary btn-small" disabled={page >= totalPages} onClick={() => setPage(page + 1)}>
+              Next
+            </button>
           </div>
         )}
       </div>
 
-      {/* Create Admin */}
       <div className="card" style={{ marginTop: 16 }}>
         <h3 style={{ marginBottom: 12 }}>Create Admin Account</h3>
         <form onSubmit={handleCreateAdmin}>
@@ -194,10 +252,18 @@ export default function AdminPage() {
             </div>
             <div className="form-group">
               <label>Password</label>
-              <input type="password" value={adminForm.password} onChange={(e) => setAdminForm({ ...adminForm, password: e.target.value })} minLength={6} required />
+              <input
+                type="password"
+                value={adminForm.password}
+                onChange={(e) => setAdminForm({ ...adminForm, password: e.target.value })}
+                minLength={6}
+                required
+              />
             </div>
           </div>
-          <button type="submit" className="btn btn-primary">Create Admin</button>
+          <button type="submit" className="btn btn-primary">
+            Create Admin
+          </button>
         </form>
       </div>
     </div>

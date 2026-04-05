@@ -11,6 +11,7 @@ Make sure you have these installed on your machine:
 - **Node.js** (v18 or higher) → [Download](https://nodejs.org/)
 - **npm** (comes with Node.js)
 - **Git** → [Download](https://git-scm.com/)
+- **Python** with the amzon virtual env at `/home/abghany/amzon/.venv` (used for DINO + Qdrant bridge)
 
 To check if you have them:
 
@@ -40,9 +41,14 @@ MONGO_URI=mongodb+srv://engkhaledmohamed55_db_user:<PASSWORD>@omnifind.0riqkxn.m
 JWT_SECRET=omnifind_super_secret_key_change_in_production
 JWT_EXPIRES_IN=7d
 PORT=5000
+AMZON_BASE_DIR=/home/abghany/amzon
+DINO_PYTHON_BIN=/home/abghany/amzon/.venv/bin/python
+MONGO_ALLOW_FALLBACK=true
 ```
 
 > **Important:** Replace `<PASSWORD>` with the actual MongoDB password. Ask the team lead for it.
+>
+> If Atlas is unreachable (for example IP whitelist issue), backend can fall back to local embedded MongoDB unless `MONGO_ALLOW_FALLBACK=false`.
 
 ### 3. Install backend dependencies
 
@@ -81,6 +87,7 @@ Go to **http://localhost:3000** and you're good to go!
 | What                  | Command       | Where                |
 | --------------------- | ------------- | -------------------- |
 | Install backend deps  | `npm install` | `OmniFind/`          |
+| Seed full amzon dataset into MongoDB | `npm run seed` | `OmniFind/` |
 | Start backend         | `npm run dev` | `OmniFind/`          |
 | Install frontend deps | `npm install` | `OmniFind/frontend/` |
 | Start frontend        | `npx vite`    | `OmniFind/frontend/` |
@@ -147,15 +154,17 @@ You get a token when you login or register. The frontend handles this automatica
 
 ### Products (`/api/products`)
 
-| Method | Route               | Auth   | Description                  |
-| ------ | ------------------- | ------ | ---------------------------- |
-| GET    | `/`                 | Public | List products (with filters) |
-| GET    | `/search/text?q=..` | Public | Full-text search             |
-| GET    | `/categories/list`  | Public | Get all categories           |
-| GET    | `/:id`              | Public | Get single product           |
-| POST   | `/`                 | Admin  | Create a new product         |
-| PUT    | `/:id`              | Admin  | Update a product             |
-| DELETE | `/:id`              | Admin  | Delete a product             |
+| Method | Route                    | Auth   | Description                                       |
+| ------ | ------------------------ | ------ | ------------------------------------------------- |
+| GET    | `/`                      | Public | List products (with filters)                      |
+| GET    | `/search/text?q=..`      | Public | Full-text search                                  |
+| POST   | `/search/visual`         | Public | Visual search (multipart image, DINO + Qdrant)   |
+| POST   | `/search/visual/sync`    | Admin  | Sync pipeline-1 vectors to local Qdrant          |
+| GET    | `/categories/list`       | Public | Get all categories                                |
+| GET    | `/:id`                   | Public | Get single product                                |
+| POST   | `/`                      | Admin  | Create product with uploaded image (no image URL) |
+| PUT    | `/:id`                   | Admin  | Update a product                                  |
+| DELETE | `/:id`                   | Admin  | Delete product + remove Qdrant product vector     |
 
 **Product filters (query params):**
 

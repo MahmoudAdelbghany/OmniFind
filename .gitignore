@@ -1,2 +1,6 @@
 node_modules/
 .env
+uploads/products/*
+!uploads/products/.gitkeep
+data/qdrant_local_db/
+data/mongodb-memory/

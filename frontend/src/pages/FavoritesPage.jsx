@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { favAPI } from "../api";
+import { favAPI, resolveProductImage } from "../api";
 
 export default function FavoritesPage() {
   const [favorites, setFavorites] = useState([]);
@@ -41,10 +41,16 @@ export default function FavoritesPage() {
       ) : (
         <div className="product-grid">
           {favorites.map((fav) => {
-            const p = fav.product;
-            return (
-              <div key={fav._id} className="product-card">
-                <img src={p.image_url} alt={p.name} onError={(e) => (e.target.src = "https://via.placeholder.com/260x180?text=No+Image")} />
+              const p = fav.product;
+              return (
+                <div key={fav._id} className="product-card">
+                  <img
+                    src={resolveProductImage(p)}
+                    alt={p.name}
+                    onError={(e) => {
+                      e.currentTarget.src = "https://via.placeholder.com/260x180?text=No+Image";
+                    }}
+                  />
                 <div className="info">
                   <div className="category">{p.main_category} / {p.sub_category}</div>
                   <div className="name">{p.name}</div>

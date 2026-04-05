@@ -9,22 +9,32 @@ function Navbar() {
   const { user, logout } = useAuth();
 
   return (
-    <div className="navbar">
-      <Link to="/products" className="logo">OmniFind</Link>
-      <nav>
-        <Link to="/products">Products</Link>
-        {user && user.role !== "guest" && <Link to="/favorites">Favorites</Link>}
-        {user && user.role === "admin" && <Link to="/admin">Admin</Link>}
-
-        {user ? (
-          <>
-            <span className="role-badge">{user.role}</span>
-            <a onClick={logout} style={{ cursor: "pointer" }}>Logout</a>
-          </>
-        ) : (
-          <Link to="/login">Login</Link>
-        )}
-      </nav>
+    <div className="navbar-wrap">
+      <div className="navbar">
+        <Link to="/products" className="logo">
+          Omni<span className="logo-accent">Find</span>
+        </Link>
+        <nav>
+          <Link to="/products">Products</Link>
+          {user && user.role !== "guest" && <Link to="/favorites">Favorites</Link>}
+          {user && user.role === "admin" && <Link to="/admin">Admin</Link>}
+          {user ? (
+            <>
+              <span className="role-badge">{user.role}</span>
+              <a onClick={logout} style={{ cursor: "pointer" }}>
+                Logout
+              </a>
+            </>
+          ) : (
+            <Link to="/login">Sign in</Link>
+          )}
+        </nav>
+      </div>
+      <div className="navbar-sub">
+        <span>Smart visual discovery</span>
+        <span>Fast category search</span>
+        <span>Curated recommendations</span>
+      </div>
     </div>
   );
 }

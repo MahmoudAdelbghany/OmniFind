@@ -4,11 +4,15 @@
 // ─────────────────────────────────────────────
 
 const BASE = "/api";
+const API_ORIGIN = import.meta.env.VITE_API_ORIGIN || "http://localhost:5000";
 
 async function request(endpoint, options = {}) {
   const token = localStorage.getItem("token");
-
-  const headers = { "Content-Type": "application/json", ...options.headers };
+  const isFormData = options.body instanceof FormData;
+  const headers = { ...(options.headers || {}) };
+  if (!isFormData) {
+    headers["Content-Type"] = "application/json";
+  }
   if (token) {
     headers["Authorization"] = `Bearer ${token}`;
   }
@@ -44,9 +48,23 @@ export const productAPI = {
   get: (id) => request(`/products/${id}`),
   search: (q, params = "") =>
     request(`/products/search/text?q=${encodeURIComponent(q)}&${params}`),
+  visualSearch: (formData) =>
+    request("/products/search/visual", {
+      method: "POST",
+      body: formData,
+    }),
+  syncVisualIndex: () =>
+    request("/products/search/visual/sync", {
+      method: "POST",
+    }),
   categories: () => request("/products/categories/list"),
   create: (body) =>
     request("/products", { method: "POST", body: JSON.stringify(body) }),
+  createWithImage: (formData) =>
+    request("/products", {
+      method: "POST",
+      body: formData,
+    }),
   update: (id, body) =>
     request(`/products/${id}`, { method: "PUT", body: JSON.stringify(body) }),
   delete: (id) => request(`/products/${id}`, { method: "DELETE" }),
@@ -63,3 +81,16 @@ export const favAPI = {
   remove: (productId) =>
     request(`/favorites/${productId}`, { method: "DELETE" }),
 };
+
+export function resolveProductImage(product) {
+  const localPath = product?.image_local || "";
+  if (localPath.includes("/final_data/visual_dataset/images/")) {
+    const fileName = localPath.split("/").pop();
+    if (fileName) return `${API_ORIGIN}/amzon-images/${fileName}`;
+  }
+  const remote = product?.image_url || "";
+  if (/^https?:\/\//i.test(remote)) return remote;
+  if (remote.startsWith("/uploads/")) return `${API_ORIGIN}${remote}`;
+  if (localPath.startsWith("/uploads/")) return `${API_ORIGIN}${localPath}`;
+  return "https://via.placeholder.com/260x180?text=No+Image";
+}

@@ -50,6 +50,14 @@ MONGO_ALLOW_FALLBACK=true
 >
 > If Atlas is unreachable (for example IP whitelist issue), backend can fall back to local embedded MongoDB unless `MONGO_ALLOW_FALLBACK=false`.
 
+### Prebuilt local vector DB included
+
+This repo now ships with a prebuilt Qdrant local collection at:
+
+`data/qdrant_local_db/collection/amazon_visual_dino/storage.sqlite`
+
+So after cloning, visual search works without running an initial long sync/indexing job.
+
 ### 3. Install backend dependencies
 
 ```bash

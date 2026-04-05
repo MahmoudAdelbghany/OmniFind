@@ -2,5 +2,10 @@ node_modules/
 .env
 uploads/products/*
 !uploads/products/.gitkeep
-data/qdrant_local_db/
+data/qdrant_local_db/.lock
+data/qdrant_local_db/*
+!data/qdrant_local_db/meta.json
+!data/qdrant_local_db/collection/
+!data/qdrant_local_db/collection/amazon_visual_dino/
+!data/qdrant_local_db/collection/amazon_visual_dino/storage.sqlite
 data/mongodb-memory/

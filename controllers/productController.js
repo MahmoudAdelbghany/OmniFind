@@ -4,6 +4,7 @@ const Product = require("../models/Product");
 const {
   ensurePipelineVectors,
   searchVisual,
+  searchText,
   upsertProductVector,
   deleteProductVector,
 } = require("../services/visualSearchService");
@@ -17,6 +18,74 @@ function parseNumber(value, fallback = 0) {
 function parseRatingCount(value) {
   if (value === undefined || value === null || value === "") return 0;
   return parseNumber(String(value).replace(/,/g, ""), 0);
+}
+
+async function mapHitsToProducts(hits, scoreField) {
+  const idCandidates = hits
+    .map((hit) => String(hit?.payload?.product_id || "").trim())
+    .filter(Boolean);
+  const linkCandidates = hits
+    .map((hit) => String(hit?.payload?.link || "").trim())
+    .filter(Boolean);
+
+  const [productsByIdRows, productsByLinkRows] = await Promise.all([
+    idCandidates.length ? Product.find({ _id: { $in: idCandidates } }) : Promise.resolve([]),
+    linkCandidates.length ? Product.find({ link: { $in: linkCandidates } }) : Promise.resolve([]),
+  ]);
+  const productsById = new Map(productsByIdRows.map((row) => [String(row._id), row]));
+  const productsByLink = new Map(productsByLinkRows.map((row) => [row.link, row]));
+
+  const products = [];
+  for (const hit of hits) {
+    const payload = hit.payload || {};
+    const productId = payload.product_id ? String(payload.product_id) : "";
+    const productLink = payload.link ? String(payload.link) : "";
+    let product = null;
+    if (productId && productsById.has(productId)) {
+      product = productsById.get(productId);
+    } else if (productLink && productsByLink.has(productLink)) {
+      product = productsByLink.get(productLink);
+    } else if (payload.pipeline_index !== undefined && payload.pipeline_index !== null) {
+      const pipelineIdx = Number(payload.pipeline_index);
+      if (Number.isFinite(pipelineIdx)) {
+        const filePattern = `prod_${pipelineIdx}.jpg$`;
+        product = await Product.findOne({
+          image_local: { $regex: filePattern },
+        });
+      }
+    }
+    if (!product && payload.name) {
+      product = await Product.findOne({
+        name: payload.name,
+        main_category: payload.main_category || undefined,
+      });
+    }
+    if (product) {
+      products.push({
+        ...product.toObject(),
+        [scoreField]: hit.score,
+      });
+      continue;
+    }
+    products.push({
+      _id: payload.product_id || `${scoreField}-${hit.id}`,
+      name: payload.name || "Vector match",
+      main_category: payload.main_category || "",
+      sub_category: payload.sub_category || "",
+      image_url: "",
+      image_local: payload.image_local || "",
+      link: payload.link || "",
+      ratings: payload.ratings || 0,
+      no_of_ratings: payload.no_of_ratings || 0,
+      description: payload.description || "",
+      discount_price_usd: payload.discount_price_usd || 0,
+      actual_price_usd: payload.actual_price_usd || 0,
+      discount_percentage: payload.discount_percentage || 0,
+      [scoreField]: hit.score,
+    });
+  }
+
+  return products;
 }
 
 // ─────────────────────────────────────────────
@@ -114,6 +183,31 @@ exports.searchProducts = async (req, res) => {
 };
 
 // ─────────────────────────────────────────────
+//  GET /api/products/search/semantic?q=...
+//  Public: vector text search using team pipeline embeddings
+// ─────────────────────────────────────────────
+exports.searchProductsSemantic = async (req, res) => {
+  try {
+    const query = String(req.query.q || "").trim();
+    if (!query) {
+      return res.status(400).json({ message: "Please provide a search query (?q=...)." });
+    }
+    const topK = Math.max(1, Math.min(Number(req.query.limit || 20), 40));
+    const result = await searchText(query, topK);
+    const hits = Array.isArray(result.hits) ? result.hits : [];
+    const products = await mapHitsToProducts(hits, "text_score");
+    res.json({
+      products,
+      page: 1,
+      totalPages: 1,
+      totalProducts: products.length,
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// ─────────────────────────────────────────────
 //  POST /api/products/search/visual
 //  Public: visual similarity search using DINO + Qdrant
 // ─────────────────────────────────────────────
@@ -126,54 +220,7 @@ exports.searchProductsByImage = async (req, res) => {
     const topK = Math.max(1, Math.min(Number(req.body.top_k || req.query.top_k || 12), 30));
     const searchResult = await searchVisual(req.file.path, topK);
     const hits = Array.isArray(searchResult.hits) ? searchResult.hits : [];
-    const idCandidates = hits
-      .map((hit) => String(hit?.payload?.product_id || "").trim())
-      .filter(Boolean);
-    const linkCandidates = hits
-      .map((hit) => String(hit?.payload?.link || "").trim())
-      .filter(Boolean);
-
-    const [productsByIdRows, productsByLinkRows] = await Promise.all([
-      idCandidates.length ? Product.find({ _id: { $in: idCandidates } }) : Promise.resolve([]),
-      linkCandidates.length ? Product.find({ link: { $in: linkCandidates } }) : Promise.resolve([]),
-    ]);
-    const productsById = new Map(productsByIdRows.map((row) => [String(row._id), row]));
-    const productsByLink = new Map(productsByLinkRows.map((row) => [row.link, row]));
-
-    const products = [];
-    for (const hit of hits) {
-      const payload = hit.payload || {};
-      const productId = payload.product_id ? String(payload.product_id) : "";
-      const productLink = payload.link ? String(payload.link) : "";
-      let product = null;
-      if (productId && productsById.has(productId)) {
-        product = productsById.get(productId);
-      } else if (productLink && productsByLink.has(productLink)) {
-        product = productsByLink.get(productLink);
-      }
-      if (product) {
-        products.push({
-          ...product.toObject(),
-          visual_score: hit.score,
-        });
-      } else {
-        products.push({
-          _id: payload.product_id || `visual-${hit.id}`,
-          name: payload.name || "Visual match",
-          main_category: payload.main_category || "",
-          sub_category: payload.sub_category || "",
-          image_url: "",
-          image_local: payload.image_local || "",
-          link: payload.link || "",
-          ratings: 0,
-          no_of_ratings: 0,
-          description: "",
-          discount_price_usd: 0,
-          actual_price_usd: 0,
-          visual_score: hit.score,
-        });
-      }
-    }
+    const products = await mapHitsToProducts(hits, "visual_score");
 
     res.json({
       products,
@@ -229,6 +276,7 @@ exports.createProduct = async (req, res) => {
       description: req.body.description || "",
       discount_price_usd: parseNumber(req.body.discount_price_usd, 0),
       actual_price_usd: parseNumber(req.body.actual_price_usd, 0),
+      discount_percentage: parseNumber(req.body.discount_percentage, 0),
     });
 
     await upsertProductVector(product, req.file.path);

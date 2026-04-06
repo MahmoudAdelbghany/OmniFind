@@ -48,6 +48,8 @@ export const productAPI = {
   get: (id) => request(`/products/${id}`),
   search: (q, params = "") =>
     request(`/products/search/text?q=${encodeURIComponent(q)}&${params}`),
+  semanticSearch: (q, params = "") =>
+    request(`/products/search/semantic?q=${encodeURIComponent(q)}&${params}`),
   visualSearch: (formData) =>
     request("/products/search/visual", {
       method: "POST",

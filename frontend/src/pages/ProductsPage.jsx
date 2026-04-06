@@ -2,6 +2,28 @@ import { useState, useEffect } from "react";
 import { productAPI, favAPI, resolveProductImage } from "../api";
 import { useAuth } from "../context/AuthContext";
 
+function SearchIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+      <path
+        fill="currentColor"
+        d="M10 2a8 8 0 1 1-5.293 14.001l-2.854 2.853a1 1 0 1 1-1.414-1.414l2.853-2.854A8 8 0 0 1 10 2m0 2a6 6 0 1 0 0 12 6 6 0 0 0 0-12"
+      />
+    </svg>
+  );
+}
+
+function MicIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+      <path
+        fill="currentColor"
+        d="M12 15a4 4 0 0 0 4-4V7a4 4 0 1 0-8 0v4a4 4 0 0 0 4 4m6-4a1 1 0 0 1 2 0 8 8 0 0 1-7 7.938V21h3a1 1 0 1 1 0 2H8a1 1 0 1 1 0-2h3v-2.062A8 8 0 0 1 4 11a1 1 0 0 1 2 0 6 6 0 0 0 12 0"
+      />
+    </svg>
+  );
+}
+
 export default function ProductsPage() {
   const { user } = useAuth();
   const [products, setProducts] = useState([]);
@@ -17,6 +39,10 @@ export default function ProductsPage() {
 
   const [searchQuery, setSearchQuery] = useState("");
   const [searchMode, setSearchMode] = useState(false);
+  const [voiceListening, setVoiceListening] = useState(false);
+  const [voiceError, setVoiceError] = useState("");
+  const [voiceSupported, setVoiceSupported] = useState(false);
+
   const [category, setCategory] = useState("");
   const [categories, setCategories] = useState([]);
   const [minPrice, setMinPrice] = useState("");
@@ -26,6 +52,8 @@ export default function ProductsPage() {
   const [favIds, setFavIds] = useState(new Set());
 
   useEffect(() => {
+    const supported = Boolean(window.SpeechRecognition || window.webkitSpeechRecognition);
+    setVoiceSupported(supported);
     productAPI
       .categories()
       .then((data) => setCategories(data.categories))
@@ -70,14 +98,13 @@ export default function ProductsPage() {
       if (minRating) params += `&min_rating=${minRating}`;
 
       const useSearch = forceSearch === null ? searchMode && searchQuery.trim() : forceSearch;
-      const data =
-        useSearch
-          ? await productAPI.search(searchQuery, params)
-          : await productAPI.list(params);
+      const data = useSearch
+        ? await productAPI.semanticSearch(searchQuery, `limit=18`)
+        : await productAPI.list(params);
 
       setProducts(data.products);
-      setTotalPages(data.totalPages);
-      setTotal(data.totalProducts);
+      setTotalPages(data.totalPages || 1);
+      setTotal(data.totalProducts || 0);
     } catch (err) {
       console.error(err);
     }
@@ -88,10 +115,41 @@ export default function ProductsPage() {
     e.preventDefault();
     setVisualMode(false);
     setVisualError("");
+    setVoiceError("");
     setPage(1);
     const useSearch = Boolean(searchQuery.trim());
     setSearchMode(useSearch);
     fetchProducts(useSearch, 1);
+  };
+
+  const handleVoiceSearch = () => {
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SR) {
+      setVoiceError("Voice search is not supported in this browser.");
+      return;
+    }
+    setVoiceError("");
+    const recognition = new SR();
+    recognition.lang = "en-US";
+    recognition.interimResults = false;
+    recognition.maxAlternatives = 1;
+    recognition.onstart = () => setVoiceListening(true);
+    recognition.onend = () => setVoiceListening(false);
+    recognition.onerror = () => {
+      setVoiceListening(false);
+      setVoiceError("Could not capture voice. Try again.");
+    };
+    recognition.onresult = (event) => {
+      const transcript = event.results?.[0]?.[0]?.transcript?.trim() || "";
+      if (!transcript) return;
+      setSearchQuery(transcript);
+      setVisualMode(false);
+      setVisualError("");
+      setSearchMode(true);
+      setPage(1);
+      fetchProducts(true, 1);
+    };
+    recognition.start();
   };
 
   const handleVisualSearch = async (e) => {
@@ -124,6 +182,7 @@ export default function ProductsPage() {
     setSearchMode(false);
     setVisualMode(false);
     setVisualError("");
+    setVoiceError("");
     setVisualImage(null);
     setPage(1);
     fetchProducts(false, 1);
@@ -155,11 +214,24 @@ export default function ProductsPage() {
       </h2>
 
       <form onSubmit={handleSearch} className="search-bar">
+        <button type="submit" className="icon-btn search-icon-btn" aria-label="Search">
+          <SearchIcon />
+        </button>
         <input
-          placeholder="Search OmniFind products..."
+          placeholder="Semantic product search (voice + text)..."
           value={searchQuery}
           onChange={(e) => setSearchQuery(e.target.value)}
         />
+        <button
+          type="button"
+          className={`icon-btn voice-icon-btn ${voiceListening ? "listening" : ""}`}
+          onClick={handleVoiceSearch}
+          disabled={!voiceSupported}
+          aria-label="Voice search"
+          title={voiceSupported ? "Voice search" : "Voice search unavailable"}
+        >
+          <MicIcon />
+        </button>
         <button type="submit" className="btn btn-primary">
           Search
         </button>
@@ -169,6 +241,7 @@ export default function ProductsPage() {
           </button>
         )}
       </form>
+      {voiceError && <div className="error">{voiceError}</div>}
 
       <form onSubmit={handleVisualSearch} className="visual-search modern-visual">
         <div className="visual-search-left">
@@ -180,13 +253,9 @@ export default function ProductsPage() {
               onChange={(e) => setVisualImage(e.target.files?.[0] || null)}
             />
           </label>
-          <div className="visual-file-meta">
-            {visualImage ? visualImage.name : "PNG / JPG / WEBP"}
-          </div>
+          <div className="visual-file-meta">{visualImage ? visualImage.name : "PNG / JPG / WEBP"}</div>
         </div>
-        {visualPreview && (
-          <img className="visual-preview" src={visualPreview} alt="Visual query preview" />
-        )}
+        {visualPreview && <img className="visual-preview" src={visualPreview} alt="Visual query preview" />}
         <button type="submit" className="btn btn-amazon" disabled={visualLoading}>
           {visualLoading ? "Searching visually..." : "Run Visual Search"}
         </button>
@@ -273,9 +342,7 @@ export default function ProductsPage() {
             </div>
           ))}
         </div>
-      ) : (
-        <>
-      {products.length === 0 ? (
+      ) : products.length === 0 ? (
         <p>No products found.</p>
       ) : (
         <div className="product-grid">
@@ -303,6 +370,12 @@ export default function ProductsPage() {
                 {typeof p.visual_score === "number" && (
                   <div className="visual-score">Visual score: {p.visual_score.toFixed(4)}</div>
                 )}
+                {typeof p.text_score === "number" && (
+                  <div className="text-score">Text score: {p.text_score.toFixed(4)}</div>
+                )}
+                {typeof p.discount_percentage === "number" && p.discount_percentage > 0 && (
+                  <div className="discount-pill">-{p.discount_percentage.toFixed(0)}%</div>
+                )}
               </div>
               {user && user.role !== "guest" && (
                 <div className="actions">
@@ -317,8 +390,6 @@ export default function ProductsPage() {
             </div>
           ))}
         </div>
-      )}
-        </>
       )}
 
       {!visualMode && totalPages > 1 && (

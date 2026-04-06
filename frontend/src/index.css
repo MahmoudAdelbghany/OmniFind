@@ -169,6 +169,7 @@ body {
   display: flex;
   gap: 8px;
   margin-bottom: 10px;
+  align-items: center;
 }
 
 .search-bar input {
@@ -177,6 +178,29 @@ body {
   border-radius: 8px;
   padding: 11px 14px;
   font-size: 1rem;
+}
+
+.icon-btn {
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  border: 1px solid #d2d8e1;
+  background: #fff;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #1f2d3d;
+  cursor: pointer;
+}
+
+.icon-btn:hover {
+  background: #f5f8fd;
+}
+
+.voice-icon-btn.listening {
+  color: #d13212;
+  border-color: #d13212;
+  animation: pulse 1s infinite ease;
 }
 
 .visual-search {
@@ -341,6 +365,22 @@ body {
   margin-top: 6px;
   font-size: 0.78rem;
   color: #565959;
+}
+
+.text-score {
+  margin-top: 4px;
+  font-size: 0.78rem;
+  color: #2f5fb0;
+}
+
+.discount-pill {
+  margin-top: 8px;
+  display: inline-block;
+  padding: 3px 8px;
+  border-radius: 999px;
+  font-size: 0.76rem;
+  color: #fff;
+  background: #067d62;
 }
 
 .skeleton-card {

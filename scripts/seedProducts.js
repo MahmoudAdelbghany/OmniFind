@@ -36,6 +36,14 @@ function normalizeProductFromRow(row, visualByLink, rowIndex) {
   } else if (fs.existsSync(indexedImagePath)) {
     imageLocal = indexedImagePath;
   }
+  const discountPrice = safeNumber(row.discount_price_usd);
+  const actualPrice = safeNumber(row.actual_price_usd);
+  const discountPercentage =
+    row.discount_percentage !== undefined && row.discount_percentage !== ""
+      ? safeNumber(row.discount_percentage)
+      : actualPrice > 0
+        ? ((actualPrice - discountPrice) / actualPrice) * 100
+        : 0;
   return {
     name: normalizeText(row.name),
     main_category: normalizeText(row.main_category),
@@ -46,8 +54,9 @@ function normalizeProductFromRow(row, visualByLink, rowIndex) {
     ratings: safeNumber(row.ratings),
     no_of_ratings: parseRatingsCount(row.no_of_ratings),
     description: normalizeText(row.description),
-    discount_price_usd: safeNumber(row.discount_price_usd),
-    actual_price_usd: safeNumber(row.actual_price_usd),
+    discount_price_usd: discountPrice,
+    actual_price_usd: actualPrice,
+    discount_percentage: discountPercentage,
   };
 }
 

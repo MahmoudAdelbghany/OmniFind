@@ -12,6 +12,10 @@ Make sure you have these installed on your machine:
 - **npm** (comes with Node.js)
 - **Git** → [Download](https://git-scm.com/)
 - **Python** with the amzon virtual env at `/home/abghany/amzon/.venv` (used for DINO + Qdrant bridge)
+- In that venv, install:
+  - `sentence-transformers`
+  - `faiss-cpu` (or compatible faiss build)
+  - `modal` (for team voice pipeline compatibility)
 
 To check if you have them:
 
@@ -56,7 +60,7 @@ This repo now ships with a prebuilt Qdrant local collection at:
 
 `data/qdrant_local_db/collection/amazon_visual_dino/storage.sqlite`
 
-So after cloning, visual search works without running an initial long sync/indexing job.
+So after cloning, visual search is bootstrapped quickly. The worker also merges the team text pipeline vectors into the same Qdrant collection as named vectors (`image` + `text`).
 
 ### 3. Install backend dependencies
 
@@ -166,6 +170,7 @@ You get a token when you login or register. The frontend handles this automatica
 | ------ | ------------------------ | ------ | ------------------------------------------------- |
 | GET    | `/`                      | Public | List products (with filters)                      |
 | GET    | `/search/text?q=..`      | Public | Full-text search                                  |
+| GET    | `/search/semantic?q=..`  | Public | Vector text search (team FAISS pipeline merged into Qdrant) |
 | POST   | `/search/visual`         | Public | Visual search (multipart image, DINO + Qdrant)   |
 | POST   | `/search/visual/sync`    | Admin  | Sync pipeline-1 vectors to local Qdrant          |
 | GET    | `/categories/list`       | Public | Get all categories                                |
@@ -225,6 +230,13 @@ OmniFind/
 │   └── favoriteRoutes.js
 ├── scripts/
 │   └── seedProducts.js          # Load CSV → MongoDB + create admin
+├── integrations/
+│   └── voice_team/              # Team voice/text artifacts (unchanged)
+│       ├── alt_faiss_index.bin
+│       ├── alt_doc_map.pkl
+│       ├── omnifind.py
+│       ├── vad_stt.py
+│       └── modal_app.py
 ├── data/
 │   ├── Amazon-Products-100.csv
 │   └── product_images/

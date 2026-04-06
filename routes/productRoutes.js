@@ -6,6 +6,7 @@ const {
   getProducts,
   getProduct,
   searchProducts,
+  searchProductsSemantic,
   getCategories,
   createProduct,
   searchProductsByImage,
@@ -17,6 +18,7 @@ const {
 // ── Public routes (guests can access) ──
 router.get("/", allowGuest, getProducts);
 router.get("/search/text", allowGuest, searchProducts);
+router.get("/search/semantic", allowGuest, searchProductsSemantic);
 router.post("/search/visual", allowGuest, uploadProductImage.single("image"), searchProductsByImage);
 router.get("/categories/list", allowGuest, getCategories);
 router.get("/:id", allowGuest, getProduct);

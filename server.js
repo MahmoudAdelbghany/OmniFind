@@ -67,6 +67,7 @@ connectDB().then(() => {
     console.log(`    POST   /api/auth/create-admin   (admin only)`);
     console.log(`    GET    /api/products`);
     console.log(`    GET    /api/products/search/text?q=...`);
+    console.log(`    GET    /api/products/search/semantic?q=...`);
     console.log(`    POST   /api/products/search/visual   (multipart image upload)`);
     console.log(`    POST   /api/products/search/visual/sync   (admin only)`);
     console.log(`    GET    /api/products/categories/list`);

@@ -15,6 +15,7 @@ export default function AdminPage() {
     description: "",
     discount_price_usd: "",
     actual_price_usd: "",
+    discount_percentage: "",
     ratings: "",
     no_of_ratings: "",
     link: "",
@@ -59,6 +60,7 @@ export default function AdminPage() {
         description: "",
         discount_price_usd: "",
         actual_price_usd: "",
+        discount_percentage: "",
         ratings: "",
         no_of_ratings: "",
         link: "",
@@ -157,6 +159,10 @@ export default function AdminPage() {
             <div className="form-group">
               <label>Rating (0-5)</label>
               <input type="number" step="0.1" min="0" max="5" {...f("ratings")} />
+            </div>
+            <div className="form-group">
+              <label>Discount %</label>
+              <input type="number" step="0.1" {...f("discount_percentage")} />
             </div>
             <div className="form-group">
               <label>Number of Ratings</label>

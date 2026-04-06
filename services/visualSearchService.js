@@ -22,7 +22,7 @@ function ensureWorker() {
   workerReady = new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
       reject(new Error("Visual worker startup timed out."));
-    }, 120000);
+    }, 600000);
 
     rl.on("line", (line) => {
       let payload;
@@ -76,7 +76,25 @@ async function searchVisual(imagePath, topK = 12) {
   return sendCommand({ cmd: "search", image: imagePath, top_k: topK });
 }
 
+async function searchText(query, topK = 12) {
+  return sendCommand({ cmd: "search-text", query, top_k: topK });
+}
+
 async function upsertProductVector(product, imagePath) {
+  const discountPercentage =
+    product.actual_price_usd > 0
+      ? ((product.actual_price_usd - product.discount_price_usd) / product.actual_price_usd) * 100
+      : null;
+  const textBlob = [
+    product.name || "",
+    product.main_category || "",
+    product.sub_category || "",
+    product.description || "",
+    String(product.discount_price_usd || 0),
+    String(product.actual_price_usd || 0),
+  ]
+    .filter(Boolean)
+    .join(" | ");
   return sendCommand({
     cmd: "upsert-product",
     product_id: String(product._id),
@@ -86,6 +104,12 @@ async function upsertProductVector(product, imagePath) {
     link: product.link || "",
     image_local: product.image_local || "",
     image: imagePath,
+    ratings: product.ratings || 0,
+    no_of_ratings: product.no_of_ratings || 0,
+    discount_price_usd: product.discount_price_usd || 0,
+    actual_price_usd: product.actual_price_usd || 0,
+    discount_percentage: discountPercentage,
+    text_blob: textBlob,
   });
 }
 
@@ -99,6 +123,7 @@ async function deleteProductVector(productId) {
 module.exports = {
   ensurePipelineVectors,
   searchVisual,
+  searchText,
   upsertProductVector,
   deleteProductVector,
 };

@@ -1,46 +1,53 @@
 const mongoose = require("mongoose");
+const os = require("os");
 const path = require("path");
-const fs = require("fs");
+const { MongoMemoryServer } = require("mongodb-memory-server");
 
-let memoryServer = null;
+let mongoMemoryServer = null;
 
-async function startEmbeddedMongo() {
-  const { MongoMemoryServer } = require("mongodb-memory-server");
-  const dataDir = path.join(__dirname, "..", "data", "mongodb-memory");
-  fs.mkdirSync(dataDir, { recursive: true });
-  memoryServer = await MongoMemoryServer.create({
-    instance: {
-      dbName: "omnifind",
-      dbPath: dataDir,
-    },
+async function resolveMongoUri() {
+  const mongoUri = String(process.env.MONGO_URI || "").trim();
+  if (mongoUri) return mongoUri;
+
+  const baseDir = process.env.MONGOMS_DOWNLOAD_DIR || path.join(os.tmpdir(), "omnifind-mongod-bin");
+  mongoMemoryServer = await MongoMemoryServer.create({
+    binary: { downloadDir: baseDir },
+    instance: { dbName: "omnifind" },
   });
-  return memoryServer.getUri();
+  const inMemoryUri = mongoMemoryServer.getUri("omnifind");
+  console.log("MONGO_URI not set. Started local mongodb-memory-server instance.");
+  return inMemoryUri;
+}
+
+function allowMemoryFallback() {
+  const raw = String(process.env.MONGO_ALLOW_MEMORY_FALLBACK || "").trim().toLowerCase();
+  return !(raw === "0" || raw === "false" || raw === "no");
 }
 
 const connectDB = async () => {
-  const allowFallback = process.env.MONGO_ALLOW_FALLBACK !== "false";
+  const preferredUri = String(process.env.MONGO_URI || "").trim();
   try {
-    let mongoUri = process.env.MONGO_URI;
-    if (!mongoUri) {
-      mongoUri = await startEmbeddedMongo();
-      console.log("MONGO_URI not provided. Using local embedded MongoDB instance.");
-    }
-
+    const mongoUri = await resolveMongoUri();
     const conn = await mongoose.connect(mongoUri);
     console.log(`MongoDB connected: ${conn.connection.host}`);
   } catch (error) {
-    if (process.env.MONGO_URI && allowFallback) {
+    if (preferredUri && allowMemoryFallback()) {
       try {
-        const fallbackUri = await startEmbeddedMongo();
-        console.warn(`\n  Remote MongoDB unavailable: ${error.message}`);
-        console.warn("  Falling back to local embedded MongoDB (set MONGO_ALLOW_FALLBACK=false to disable).");
+        const baseDir = process.env.MONGOMS_DOWNLOAD_DIR || path.join(os.tmpdir(), "omnifind-mongod-bin");
+        mongoMemoryServer = await MongoMemoryServer.create({
+          binary: { downloadDir: baseDir },
+          instance: { dbName: "omnifind" },
+        });
+        const fallbackUri = mongoMemoryServer.getUri("omnifind");
         const conn = await mongoose.connect(fallbackUri);
-        console.log(`MongoDB connected (fallback): ${conn.connection.host}`);
+        console.warn("Primary MONGO_URI failed. Fell back to local mongodb-memory-server.");
+        console.log(`MongoDB connected: ${conn.connection.host}`);
         return;
       } catch (fallbackError) {
         console.error(`\n  MongoDB fallback error: ${fallbackError.message}`);
       }
     }
+
     console.error(`\n  MongoDB connection error: ${error.message}`);
     console.error(`  ─────────────────────────────────────────────`);
     console.error(`  Possible fixes:`);
@@ -55,8 +62,8 @@ const connectDB = async () => {
 };
 
 process.on("exit", async () => {
-  if (memoryServer) {
-    await memoryServer.stop();
+  if (mongoMemoryServer) {
+    await mongoMemoryServer.stop();
   }
 });
 

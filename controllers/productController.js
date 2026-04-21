@@ -6,6 +6,10 @@ const {
   searchVisual,
   upsertProductVector,
   deleteProductVector,
+  ensureTextVectors,
+  searchText,
+  upsertProductTextVector,
+  deleteProductTextVector,
 } = require("../services/visualSearchService");
 
 function parseNumber(value, fallback = 0) {
@@ -17,6 +21,64 @@ function parseNumber(value, fallback = 0) {
 function parseRatingCount(value) {
   if (value === undefined || value === null || value === "") return 0;
   return parseNumber(String(value).replace(/,/g, ""), 0);
+}
+
+function parseOptionalNumber(value) {
+  if (value === undefined || value === null || value === "") return undefined;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+// ── Text search state ──
+let textIndexReady = false;
+let textIndexInitPromise = null;
+let textIndexedCount = null;
+
+async function ensureTextSearchReady(force = false) {
+  if (!force && textIndexReady) {
+    const currentCount = await Product.countDocuments({});
+    if (textIndexedCount === currentCount) {
+      return { synced: false, reason: "already-ready", count: currentCount };
+    }
+  }
+  if (!force && textIndexInitPromise) {
+    return textIndexInitPromise;
+  }
+
+  textIndexInitPromise = (async () => {
+    const products = await Product.find(
+      {},
+      {
+        _id: 1,
+        name: 1,
+        main_category: 1,
+        sub_category: 1,
+        description: 1,
+        discount_price_usd: 1,
+        actual_price_usd: 1,
+        ratings: 1,
+        no_of_ratings: 1,
+        link: 1,
+        image_local: 1,
+        image_url: 1,
+      },
+    ).lean();
+
+    const syncResult = await ensureTextVectors(products, { force });
+    textIndexReady = true;
+    textIndexedCount = products.length;
+    return syncResult;
+  })();
+
+  try {
+    return await textIndexInitPromise;
+  } catch (error) {
+    textIndexReady = false;
+    textIndexedCount = null;
+    throw error;
+  } finally {
+    textIndexInitPromise = null;
+  }
 }
 
 // ─────────────────────────────────────────────
@@ -79,34 +141,126 @@ exports.getProduct = async (req, res) => {
 
 // ─────────────────────────────────────────────
 //  GET /api/products/search/text?q=...
-//  Public: full-text search using MongoDB text index
+//  Public: hybrid semantic search powered by
+//  BGE-M3 + Qdrant (OmniFind V2 pipeline)
 // ─────────────────────────────────────────────
 exports.searchProducts = async (req, res) => {
   try {
-    const query = req.query.q;
+    const query = String(req.query.q || "").trim();
     if (!query) {
       return res.status(400).json({ message: "Please provide a search query (?q=...)" });
     }
 
-    const page = parseInt(req.query.page, 10) || 1;
-    const limit = parseInt(req.query.limit, 10) || 20;
-    const skip = (page - 1) * limit;
+    const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+    const limit = Math.max(1, Math.min(parseInt(req.query.limit, 10) || 20, 50));
 
-    const products = await Product.find(
-      { $text: { $search: query } },
-      { score: { $meta: "textScore" } },
-    )
-      .sort({ score: { $meta: "textScore" } })
-      .skip(skip)
-      .limit(limit);
+    // Lazily initialize text index on first search
+    await ensureTextSearchReady(false);
 
-    const total = await Product.countDocuments({ $text: { $search: query } });
+    const requestedPool = Math.max(limit * page, parseInt(req.query.search_pool, 10) || 240);
+    const topK = Math.min(requestedPool, 1000);
+
+    const searchOptions = {
+      topK,
+      category: req.query.category,
+      subCategory: req.query.sub_category,
+      minPrice: parseOptionalNumber(req.query.min_price),
+      maxPrice: parseOptionalNumber(req.query.max_price),
+      minRating: parseOptionalNumber(req.query.min_rating),
+    };
+
+    let searchResult;
+    try {
+      searchResult = await searchText(query, searchOptions);
+    } catch (firstError) {
+      const message = String(firstError?.message || "");
+      const shouldRecover =
+        message.includes("Collection") ||
+        message.includes("Wrong input") ||
+        message.includes("expected dim") ||
+        message.includes("not found") ||
+        message.includes("No text encoder backend");
+
+      if (!shouldRecover) {
+        throw firstError;
+      }
+
+      // Recovery path: rebuild text index and retry once.
+      await ensureTextSearchReady(true);
+      searchResult = await searchText(query, searchOptions);
+    }
+
+    // Resolve hits to full MongoDB product documents
+    const hits = Array.isArray(searchResult.hits) ? searchResult.hits : [];
+    const idCandidates = hits
+      .map((hit) => String(hit?.payload?.product_id || "").trim())
+      .filter(Boolean);
+    const linkCandidates = hits
+      .map((hit) => String(hit?.payload?.link || "").trim())
+      .filter(Boolean);
+
+    const [productsByIdRows, productsByLinkRows] = await Promise.all([
+      idCandidates.length ? Product.find({ _id: { $in: idCandidates } }) : Promise.resolve([]),
+      linkCandidates.length ? Product.find({ link: { $in: linkCandidates } }) : Promise.resolve([]),
+    ]);
+
+    const productsById = new Map(productsByIdRows.map((row) => [String(row._id), row]));
+    const productsByLink = new Map(productsByLinkRows.map((row) => [row.link, row]));
+
+    const rankedProducts = [];
+    for (const hit of hits) {
+      const payload = hit.payload || {};
+      const productId = payload.product_id ? String(payload.product_id) : "";
+      const productLink = payload.link ? String(payload.link) : "";
+
+      let product = null;
+      if (productId && productsById.has(productId)) {
+        product = productsById.get(productId);
+      } else if (productLink && productsByLink.has(productLink)) {
+        product = productsByLink.get(productLink);
+      }
+
+      if (product) {
+        rankedProducts.push({
+          ...product.toObject(),
+          text_score: hit.score,
+        });
+      } else {
+        rankedProducts.push({
+          _id: payload.product_id || `text-${hit.id}`,
+          name: payload.name || "Search match",
+          main_category: payload.main_category || "",
+          sub_category: payload.sub_category || "",
+          image_url: payload.image_url || "",
+          image_local: payload.image_local || "",
+          link: payload.link || "",
+          ratings: parseNumber(payload.ratings, 0),
+          no_of_ratings: parseRatingCount(payload.no_of_ratings),
+          description: payload.description || "",
+          discount_price_usd: parseNumber(payload.discount_price_usd, 0),
+          actual_price_usd: parseNumber(payload.actual_price_usd, 0),
+          text_score: hit.score,
+        });
+      }
+    }
+
+    const total = rankedProducts.length;
+    const totalPages = Math.max(1, Math.ceil(total / limit));
+    const safePage = Math.min(page, totalPages);
+    const start = (safePage - 1) * limit;
+    const pagedProducts = rankedProducts.slice(start, start + limit);
 
     res.json({
-      products,
-      page,
-      totalPages: Math.ceil(total / limit),
+      products: pagedProducts,
+      page: safePage,
+      totalPages,
       totalProducts: total,
+      intent: searchResult.intent || null,
+      searchEngine: {
+        provider: "qdrant",
+        collection: searchResult.collection || "",
+        encoder: searchResult.encoder || "",
+      },
     });
   } catch (error) {
     res.status(500).json({ message: error.message });
@@ -126,6 +280,7 @@ exports.searchProductsByImage = async (req, res) => {
     const topK = Math.max(1, Math.min(Number(req.body.top_k || req.query.top_k || 12), 30));
     const searchResult = await searchVisual(req.file.path, topK);
     const hits = Array.isArray(searchResult.hits) ? searchResult.hits : [];
+
     const idCandidates = hits
       .map((hit) => String(hit?.payload?.product_id || "").trim())
       .filter(Boolean);
@@ -137,6 +292,7 @@ exports.searchProductsByImage = async (req, res) => {
       idCandidates.length ? Product.find({ _id: { $in: idCandidates } }) : Promise.resolve([]),
       linkCandidates.length ? Product.find({ link: { $in: linkCandidates } }) : Promise.resolve([]),
     ]);
+
     const productsById = new Map(productsByIdRows.map((row) => [String(row._id), row]));
     const productsByLink = new Map(productsByLinkRows.map((row) => [row.link, row]));
 
@@ -145,12 +301,14 @@ exports.searchProductsByImage = async (req, res) => {
       const payload = hit.payload || {};
       const productId = payload.product_id ? String(payload.product_id) : "";
       const productLink = payload.link ? String(payload.link) : "";
+
       let product = null;
       if (productId && productsById.has(productId)) {
         product = productsById.get(productId);
       } else if (productLink && productsByLink.has(productLink)) {
         product = productsByLink.get(productLink);
       }
+
       if (product) {
         products.push({
           ...product.toObject(),
@@ -162,14 +320,14 @@ exports.searchProductsByImage = async (req, res) => {
           name: payload.name || "Visual match",
           main_category: payload.main_category || "",
           sub_category: payload.sub_category || "",
-          image_url: "",
+          image_url: payload.image_url || "",
           image_local: payload.image_local || "",
           link: payload.link || "",
-          ratings: 0,
-          no_of_ratings: 0,
-          description: "",
-          discount_price_usd: 0,
-          actual_price_usd: 0,
+          ratings: parseNumber(payload.ratings, 0),
+          no_of_ratings: parseRatingCount(payload.no_of_ratings),
+          description: payload.description || "",
+          discount_price_usd: parseNumber(payload.discount_price_usd, 0),
+          actual_price_usd: parseNumber(payload.actual_price_usd, 0),
           visual_score: hit.score,
         });
       }
@@ -231,7 +389,15 @@ exports.createProduct = async (req, res) => {
       actual_price_usd: parseNumber(req.body.actual_price_usd, 0),
     });
 
-    await upsertProductVector(product, req.file.path);
+    // Index in both visual and text collections
+    await Promise.all([
+      upsertProductVector(product, req.file.path),
+      upsertProductTextVector(product),
+    ]);
+    if (typeof textIndexedCount === "number") {
+      textIndexedCount += 1;
+    }
+
     res.status(201).json({ product });
   } catch (error) {
     if (product?._id) {
@@ -258,6 +424,19 @@ exports.syncVisualVectors = async (_req, res) => {
 };
 
 // ─────────────────────────────────────────────
+//  POST /api/products/search/text/sync
+//  Admin only: sync text embeddings to Qdrant text collection
+// ─────────────────────────────────────────────
+exports.syncTextVectors = async (_req, res) => {
+  try {
+    const syncResult = await ensureTextSearchReady(true);
+    res.json({ message: "Text vectors ready", ...syncResult });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+// ─────────────────────────────────────────────
 //  PUT /api/products/:id
 //  Admin only: update product
 // ─────────────────────────────────────────────
@@ -270,6 +449,10 @@ exports.updateProduct = async (req, res) => {
     if (!product) {
       return res.status(404).json({ message: "Product not found" });
     }
+
+    // Re-index text vectors for the updated product
+    await upsertProductTextVector(product);
+
     res.json({ product });
   } catch (error) {
     res.status(500).json({ message: error.message });
@@ -287,12 +470,96 @@ exports.deleteProduct = async (req, res) => {
       return res.status(404).json({ message: "Product not found" });
     }
 
-    await deleteProductVector(req.params.id);
+    // Remove from both visual and text collections
+    await Promise.allSettled([
+      deleteProductVector(req.params.id),
+      deleteProductTextVector(req.params.id),
+    ]);
+    if (typeof textIndexedCount === "number") {
+      textIndexedCount = Math.max(0, textIndexedCount - 1);
+    }
+
     if (product.image_local && product.image_local.includes("/uploads/products/")) {
       fs.unlink(product.image_local, () => {});
     }
+
     res.json({ message: "Product deleted" });
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
 };
+
+// ─────────────────────────────────────────────
+//  POST /api/products/search/voice
+//  Public: speech-to-text then hybrid semantic search
+// ─────────────────────────────────────────────
+exports.searchProductsVoice = async (req, res) => {
+  try {
+    const { transcribeAudio } = require("../services/localSttService");
+    if (!req.file?.path) {
+      return res.status(400).json({ message: "Please upload an audio file (field: audio)." });
+    }
+
+    const sttResult = await transcribeAudio(req.file.path);
+    const transcript = String(sttResult?.transcript || "").trim();
+    if (!transcript) {
+      return res.status(400).json({ message: "No speech detected. Please try again." });
+    }
+
+    const page = Math.max(1, parseInt(req.body.page || req.query.page, 10) || 1);
+    const limit = Math.max(1, Math.min(parseInt(req.body.limit || req.query.limit, 10) || 20, 40));
+
+    // Warmup text index if needed
+    await ensureTextSearchReady(false);
+
+    const searchOptions = {
+      topK: Math.max(limit * page * 2, 80),
+      category: req.body.category || req.query.category,
+      minPrice: parseOptionalNumber(req.body.min_price || req.query.min_price),
+      maxPrice: parseOptionalNumber(req.body.max_price || req.query.max_price),
+      minRating: parseOptionalNumber(req.body.min_rating || req.query.min_rating),
+    };
+
+    const searchResult = await searchText(transcript, searchOptions);
+    const hits = Array.isArray(searchResult.hits) ? searchResult.hits : [];
+
+    // Map hits to products (shared logic could be moved to a helper, but for now we'll match searchProducts behavior)
+    const idCandidates = hits.map(h => String(h?.payload?.product_id || "")).filter(Boolean);
+    const productsByIdRows = idCandidates.length ? await Product.find({ _id: { $in: idCandidates } }) : [];
+    const productsById = new Map(productsByIdRows.map(row => [String(row._id), row]));
+
+    const products = hits.map(hit => {
+      const payload = hit.payload || {};
+      const product = productsById.get(String(payload.product_id));
+      if (product) {
+        return { ...product.toObject(), text_score: hit.score };
+      }
+      return {
+        _id: payload.product_id || `voice-${hit.id}`,
+        name: payload.name || "Voice match",
+        main_category: payload.main_category || "",
+        image_local: payload.image_local || "",
+        text_score: hit.score
+      };
+    }).slice(0, limit);
+
+    res.json({
+      transcript,
+      stt_provider: sttResult?.provider || "local-faster-whisper",
+      products,
+      page,
+      totalPages: 1,
+      totalProducts: products.length,
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  } finally {
+    if (req.file?.path) {
+      fs.unlink(req.file.path, () => {});
+    }
+  }
+};
+
+exports.searchProductsSemantic = exports.searchProducts;
+exports.warmupTextIndex = async () => ensureTextSearchReady(false);
+
